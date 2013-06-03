@@ -1,0 +1,1551 @@
+diff --git a/kernel/.config b/kernel/.config
+index 86ad14a..ecd38c9 100644
+--- a/kernel/.config
++++ b/kernel/.config
+@@ -1,7 +1,7 @@
+ #
+ # Automatically generated make config: don't edit
+ # Linux kernel version: 2.6.32.9
+-# Tue Aug 28 17:57:18 2012
++# Thu Sep 13 15:04:26 2012
+ #
+ CONFIG_ARM=y
+ CONFIG_SYS_SUPPORTS_APM_EMULATION=y
+@@ -356,7 +356,7 @@ CONFIG_SYN_COOKIES=y
+ CONFIG_TCP_CONG_CUBIC=y
+ CONFIG_DEFAULT_TCP_CONG="cubic"
+ # CONFIG_IPV6 is not set
+-CONFIG_ANDROID_PARANOID_NETWORK=y
++# CONFIG_ANDROID_PARANOID_NETWORK is not set
+ CONFIG_NETWORK_SECMARK=y
+ CONFIG_NETFILTER=y
+ # CONFIG_NETFILTER_DEBUG is not set
+@@ -1204,34 +1204,9 @@ CONFIG_RADIO_ADAPTERS=y
+ # CONFIG_USB_MR800 is not set
+ # CONFIG_RADIO_TEA5764 is not set
+ # CONFIG_DAB is not set
+-CONFIG_WMT_VIDEO_DECODE=m
+-
+-#
+-# WonderMedia Video Decoder
+-#
+-CONFIG_WMT_VIDEO_DECODE_MPEG2=m
+-CONFIG_WMT_VIDEO_DECODE_MPEG4=m
+-CONFIG_WMT_VIDEO_DECODE_DIVX=m
+-CONFIG_WMT_VIDEO_DECODE_H263=m
+-CONFIG_WMT_VIDEO_DECODE_H264=m
+-CONFIG_WMT_VIDEO_DECODE_RV=m
+-CONFIG_WMT_VIDEO_DECODE_VC1=m
+-CONFIG_WMT_VIDEO_DECODE_JPEG=m
+-CONFIG_WMT_VIDEO_LOCK=m
+-CONFIG_WMT_VIDEO_DMA=m
+-CONFIG_WMT_VIDEO_ENCODE=m
+-
+-#
+-# WonderMedia HW Video Encoder
+-#
+-CONFIG_WMT_VIDEO_ENCODE_H264=m
+-CONFIG_WMT_V4L2=m
+-
+-#
+-# WonderMedia V4L2
+-#
+-CONFIG_WMT_V4L2_CMOS=m
+-CONFIG_WMT_V4L2_TV_DECODER=m
++# CONFIG_WMT_VIDEO_DECODE is not set
++# CONFIG_WMT_VIDEO_ENCODE is not set
++# CONFIG_WMT_V4L2 is not set
+ 
+ #
+ # Graphics support
+@@ -2070,10 +2045,7 @@ CONFIG_CRYPTO_ANSI_CPRNG=m
+ #
+ # Hardware crypto devices
+ #
+-CONFIG_CRYPTO_DEV_WMT=m
+-CONFIG_CRYPTO_DEV_WMT_AES=m
+-CONFIG_CRYPTO_DEV_WMT_SHA1=m
+-CONFIG_CRYPTO_DEV_WMT_SHA256=m
++# CONFIG_CRYPTO_DEV_WMT is not set
+ # CONFIG_BINARY_PRINTF is not set
+ 
+ #
+diff --git a/kernel/arch/arm/include/asm/unistd.h b/kernel/arch/arm/include/asm/unistd.h
+index 4e506d0..6f87321 100644
+--- a/kernel/arch/arm/include/asm/unistd.h
++++ b/kernel/arch/arm/include/asm/unistd.h
+@@ -391,6 +391,8 @@
+ #define __NR_pwritev			(__NR_SYSCALL_BASE+362)
+ #define __NR_rt_tgsigqueueinfo		(__NR_SYSCALL_BASE+363)
+ #define __NR_perf_event_open		(__NR_SYSCALL_BASE+364)
++					/* 365 for recvmmsg */
++#define __NR_accept4			(__NR_SYSCALL_BASE+366)
+ 
+ /*
+  * The following SWIs are ARM private.
+diff --git a/kernel/arch/arm/kernel/calls.S b/kernel/arch/arm/kernel/calls.S
+index 4f07168..283bb8b 100644
+--- a/kernel/arch/arm/kernel/calls.S
++++ b/kernel/arch/arm/kernel/calls.S
+@@ -374,6 +374,8 @@
+ 		CALL(sys_pwritev)
+ 		CALL(sys_rt_tgsigqueueinfo)
+ 		CALL(sys_perf_event_open)
++/* 365 */	CALL(sys_ni_syscall)		/* for sys_recvmmsg */
++		CALL(sys_accept4)
+ #ifndef syscalls_counted
+ .equ syscalls_padding, ((NR_syscalls + 3) & ~3) - NR_syscalls
+ #define syscalls_counted
+diff --git a/kernel/drivers/net/via-velocity.c b/kernel/drivers/net/via-velocity.c
+index 86e4973..a6e83bf 100755
+--- a/kernel/drivers/net/via-velocity.c
++++ b/kernel/drivers/net/via-velocity.c
+@@ -9,7 +9,6 @@
+  *
+  * TODO
+  *	rx_copybreak/alignment
+- *	Scatter gather
+  *	More testing
+  *
+  * The changes are (c) Copyright 2004, Red Hat Inc. <alan@lxorguk.ukuu.org.uk>
+@@ -275,7 +274,7 @@ VELOCITY_PARAM(rx_thresh, "Receive fifo threshold");
+ 
+ #define DMA_LENGTH_MIN  0
+ #define DMA_LENGTH_MAX  7
+-#define DMA_LENGTH_DEF  0
++#define DMA_LENGTH_DEF  6
+ 
+ /* DMA_length[] is used for controlling the DMA length
+    0: 8 DWORDs
+@@ -298,14 +297,6 @@ VELOCITY_PARAM(DMA_length, "DMA length");
+ */
+ VELOCITY_PARAM(IP_byte_align, "Enable IP header dword aligned");
+ 
+-#define TX_CSUM_DEF     1
+-/* txcsum_offload[] is used for setting the checksum offload ability of NIC.
+-   (We only support RX checksum offload now)
+-   0: disable csum_offload[checksum offload
+-   1: enable checksum offload. (Default)
+-*/
+-VELOCITY_PARAM(txcsum_offload, "Enable transmit packet checksum offload");
+-
+ #define FLOW_CNTL_DEF   1
+ #define FLOW_CNTL_MIN   1
+ #define FLOW_CNTL_MAX   5
+@@ -354,29 +345,10 @@ VELOCITY_PARAM(ValPktLen, "Receiving or Drop invalid 802.3 frame");
+ */
+ VELOCITY_PARAM(wol_opts, "Wake On Lan options");
+ 
+-#define INT_WORKS_DEF   20
+-#define INT_WORKS_MIN   10
+-#define INT_WORKS_MAX   64
+-
+-VELOCITY_PARAM(int_works, "Number of packets per interrupt services");
+-
+ static int rx_copybreak = 200;
+ module_param(rx_copybreak, int, 0644);
+ MODULE_PARM_DESC(rx_copybreak, "Copy breakpoint for copy-only-tiny-frames");
+ 
+-#ifdef VELOCITY_DEBUG
+-void velocity_print_mac_context(void);
+-void velocity_print_TD(vptr);
+-#else
+-#define	velocity_print_mac_context()	do {} while (0)
+-#define velocity_print_TD(vptr)		do {} while (0)
+-#endif
+-
+-#ifdef CONFIG_PM
+-static DEFINE_SPINLOCK(velocity_dev_list_lock);
+-static LIST_HEAD(velocity_dev_list);
+-#endif
+-
+ /*
+  *	Internal board variants. At the moment we have only one
+  */
+@@ -389,7 +361,7 @@ static struct velocity_info_tbl chip_info_table[] = {
+  *	Describe the PCI device identifiers that we support in this
+  *	device driver. Used for hotplug autoloading.
+  */
+-static const struct pci_device_id velocity_id_table[] __devinitdata = {
++static DEFINE_PCI_DEVICE_TABLE(velocity_id_table) = {
+ 	{ PCI_DEVICE(PCI_VENDOR_ID_VIA, PCI_DEVICE_ID_VIA_612X) },
+ 	{ }
+ };
+@@ -425,14 +397,6 @@ static void __devexit velocity_remove1(struct pci_dev *pdev)
+ 	struct net_device *dev = pci_get_drvdata(pdev);
+ 	struct velocity_info *vptr = netdev_priv(dev);
+ 
+-#ifdef CONFIG_PM
+-	unsigned long flags;
+-
+-	spin_lock_irqsave(&velocity_dev_list_lock, flags);
+-	if (!list_empty(&velocity_dev_list))
+-		list_del(&vptr->list);
+-	spin_unlock_irqrestore(&velocity_dev_list_lock, flags);
+-#endif
+ 	unregister_netdev(dev);
+ 	iounmap(vptr->mac_regs);
+ 	pci_release_regions(pdev);
+@@ -518,13 +482,11 @@ static void __devinit velocity_get_options(struct velocity_opt *opts, int index,
+ 	velocity_set_int_opt(&opts->numrx, RxDescriptors[index], RX_DESC_MIN, RX_DESC_MAX, RX_DESC_DEF, "RxDescriptors", devname);
+ 	velocity_set_int_opt(&opts->numtx, TxDescriptors[index], TX_DESC_MIN, TX_DESC_MAX, TX_DESC_DEF, "TxDescriptors", devname);
+ 
+-	velocity_set_bool_opt(&opts->flags, txcsum_offload[index], TX_CSUM_DEF, VELOCITY_FLAGS_TX_CSUM, "txcsum_offload", devname);
+ 	velocity_set_int_opt(&opts->flow_cntl, flow_control[index], FLOW_CNTL_MIN, FLOW_CNTL_MAX, FLOW_CNTL_DEF, "flow_control", devname);
+ 	velocity_set_bool_opt(&opts->flags, IP_byte_align[index], IP_ALIG_DEF, VELOCITY_FLAGS_IP_ALIGN, "IP_byte_align", devname);
+ 	velocity_set_bool_opt(&opts->flags, ValPktLen[index], VAL_PKT_LEN_DEF, VELOCITY_FLAGS_VAL_PKT_LEN, "ValPktLen", devname);
+ 	velocity_set_int_opt((int *) &opts->spd_dpx, speed_duplex[index], MED_LNK_MIN, MED_LNK_MAX, MED_LNK_DEF, "Media link mode", devname);
+ 	velocity_set_int_opt((int *) &opts->wol_opts, wol_opts[index], WOL_OPT_MIN, WOL_OPT_MAX, WOL_OPT_DEF, "Wake On Lan options", devname);
+-	velocity_set_int_opt((int *) &opts->int_works, int_works[index], INT_WORKS_MIN, INT_WORKS_MAX, INT_WORKS_DEF, "Interrupt service works", devname);
+ 	opts->numrx = (opts->numrx & ~3);
+ }
+ 
+@@ -673,12 +635,9 @@ static void safe_disable_mii_autopoll(struct mac_regs __iomem *regs)
+ 	/*  turn off MAUTO */
+ 	writeb(0, &regs->MIICR);
+ 	for (ww = 0; ww < W_MAX_TIMEOUT; ww++) {
++		udelay(1);
+ 		if (BYTE_REG_BITS_IS_ON(MIISR_MIDLE, &regs->MIISR))
+ 			break;
+-		/* for PHY may linked at 10, and previous MAUTO
+-		 * may just enabled, HW takes 4 ms to IDLE state
+-		 */
+-		mdelay(1);
+ 	}
+ }
+ 
+@@ -692,28 +651,22 @@ static void safe_disable_mii_autopoll(struct mac_regs __iomem *regs)
+ static void enable_mii_autopoll(struct mac_regs __iomem *regs)
+ {
+ 	int ii;
+-#if 0
++
+ 	writeb(0, &(regs->MIICR));
+ 	writeb(MIIADR_SWMPL, &regs->MIIADR);
+ 
+ 	for (ii = 0; ii < W_MAX_TIMEOUT; ii++) {
++		udelay(1);
+ 		if (BYTE_REG_BITS_IS_ON(MIISR_MIDLE, &regs->MIISR))
+ 			break;
+-		/* for PHY may linked at 10, and previous MAUTO
+-		 * may just enabled, HW takes 4 ms to IDLE state
+-		 */
+-		mdelay(1);
+ 	}
+-#endif
++
+ 	writeb(MIICR_MAUTO, &regs->MIICR);
+ 
+ 	for (ii = 0; ii < W_MAX_TIMEOUT; ii++) {
++		udelay(1);
+ 		if (!BYTE_REG_BITS_IS_ON(MIISR_MIDLE, &regs->MIISR))
+ 			break;
+-		/* for PHY may linked at 10, and previous MAUTO
+-		 * may just enabled, HW takes 4 ms to IDLE state
+-		 */
+-		mdelay(1);
+ 	}
+ 
+ }
+@@ -741,7 +694,7 @@ static int velocity_mii_read(struct mac_regs __iomem *regs, u8 index, u16 *data)
+ 	BYTE_REG_BITS_ON(MIICR_RCMD, &regs->MIICR);
+ 
+ 	for (ww = 0; ww < W_MAX_TIMEOUT; ww++) {
+-		udelay(100);
++		udelay(5);
+ 		if (!(readb(&regs->MIICR) & MIICR_RCMD))
+ 			break;
+ 	}
+@@ -767,30 +720,30 @@ static u32 mii_check_media_mode(struct mac_regs __iomem *regs)
+ 	u32 status = 0;
+ 	u16 ANAR;
+ 
+-	if (!MII_REG_BITS_IS_ON(BMSR_LNK, MII_REG_BMSR, regs))
++	if (!MII_REG_BITS_IS_ON(BMSR_LSTATUS, MII_BMSR, regs))
+ 		status |= VELOCITY_LINK_FAIL;
+ 
+-	if (MII_REG_BITS_IS_ON(G1000CR_1000FD, MII_REG_G1000CR, regs))
++	if (MII_REG_BITS_IS_ON(ADVERTISE_1000FULL, MII_CTRL1000, regs))
+ 		status |= VELOCITY_SPEED_1000 | VELOCITY_DUPLEX_FULL;
+-	else if (MII_REG_BITS_IS_ON(G1000CR_1000, MII_REG_G1000CR, regs))
++	else if (MII_REG_BITS_IS_ON(ADVERTISE_1000HALF, MII_CTRL1000, regs))
+ 		status |= (VELOCITY_SPEED_1000);
+ 	else {
+-		velocity_mii_read(regs, MII_REG_ANAR, &ANAR);
+-		if (ANAR & ANAR_TXFD)
++		velocity_mii_read(regs, MII_ADVERTISE, &ANAR);
++		if (ANAR & ADVERTISE_100FULL)
+ 			status |= (VELOCITY_SPEED_100 | VELOCITY_DUPLEX_FULL);
+-		else if (ANAR & ANAR_TX)
++		else if (ANAR & ADVERTISE_100HALF)
+ 			status |= VELOCITY_SPEED_100;
+-		else if (ANAR & ANAR_10FD)
++		else if (ANAR & ADVERTISE_10FULL)
+ 			status |= (VELOCITY_SPEED_10 | VELOCITY_DUPLEX_FULL);
+ 		else
+ 			status |= (VELOCITY_SPEED_10);
+ 	}
+ 
+-	if (MII_REG_BITS_IS_ON(BMCR_AUTO, MII_REG_BMCR, regs)) {
+-		velocity_mii_read(regs, MII_REG_ANAR, &ANAR);
+-		if ((ANAR & (ANAR_TXFD | ANAR_TX | ANAR_10FD | ANAR_10))
+-		    == (ANAR_TXFD | ANAR_TX | ANAR_10FD | ANAR_10)) {
+-			if (MII_REG_BITS_IS_ON(G1000CR_1000 | G1000CR_1000FD, MII_REG_G1000CR, regs))
++	if (MII_REG_BITS_IS_ON(BMCR_ANENABLE, MII_BMCR, regs)) {
++		velocity_mii_read(regs, MII_ADVERTISE, &ANAR);
++		if ((ANAR & (ADVERTISE_100FULL | ADVERTISE_100HALF | ADVERTISE_10FULL | ADVERTISE_10HALF))
++		    == (ADVERTISE_100FULL | ADVERTISE_100HALF | ADVERTISE_10FULL | ADVERTISE_10HALF)) {
++			if (MII_REG_BITS_IS_ON(ADVERTISE_1000HALF | ADVERTISE_1000FULL, MII_CTRL1000, regs))
+ 				status |= VELOCITY_AUTONEG_ENABLE;
+ 		}
+ 	}
+@@ -826,7 +779,7 @@ static int velocity_mii_write(struct mac_regs __iomem *regs, u8 mii_addr, u16 da
+ 
+ 	/* W_MAX_TIMEOUT is the timeout period */
+ 	for (ww = 0; ww < W_MAX_TIMEOUT; ww++) {
+-		udelay(100);
++		udelay(5);
+ 		if (!(readb(&regs->MIICR) & MIICR_WCMD))
+ 			break;
+ 	}
+@@ -849,23 +802,23 @@ static void set_mii_flow_control(struct velocity_info *vptr)
+ 	/*Enable or Disable PAUSE in ANAR */
+ 	switch (vptr->options.flow_cntl) {
+ 	case FLOW_CNTL_TX:
+-		MII_REG_BITS_OFF(ANAR_PAUSE, MII_REG_ANAR, vptr->mac_regs);
+-		MII_REG_BITS_ON(ANAR_ASMDIR, MII_REG_ANAR, vptr->mac_regs);
++		MII_REG_BITS_OFF(ADVERTISE_PAUSE_CAP, MII_ADVERTISE, vptr->mac_regs);
++		MII_REG_BITS_ON(ADVERTISE_PAUSE_ASYM, MII_ADVERTISE, vptr->mac_regs);
+ 		break;
+ 
+ 	case FLOW_CNTL_RX:
+-		MII_REG_BITS_ON(ANAR_PAUSE, MII_REG_ANAR, vptr->mac_regs);
+-		MII_REG_BITS_ON(ANAR_ASMDIR, MII_REG_ANAR, vptr->mac_regs);
++		MII_REG_BITS_ON(ADVERTISE_PAUSE_CAP, MII_ADVERTISE, vptr->mac_regs);
++		MII_REG_BITS_ON(ADVERTISE_PAUSE_ASYM, MII_ADVERTISE, vptr->mac_regs);
+ 		break;
+ 
+ 	case FLOW_CNTL_TX_RX:
+-		MII_REG_BITS_ON(ANAR_PAUSE, MII_REG_ANAR, vptr->mac_regs);
+-		MII_REG_BITS_ON(ANAR_ASMDIR, MII_REG_ANAR, vptr->mac_regs);
++		MII_REG_BITS_ON(ADVERTISE_PAUSE_CAP, MII_ADVERTISE, vptr->mac_regs);
++		MII_REG_BITS_OFF(ADVERTISE_PAUSE_ASYM, MII_ADVERTISE, vptr->mac_regs);
+ 		break;
+ 
+ 	case FLOW_CNTL_DISABLE:
+-		MII_REG_BITS_OFF(ANAR_PAUSE, MII_REG_ANAR, vptr->mac_regs);
+-		MII_REG_BITS_OFF(ANAR_ASMDIR, MII_REG_ANAR, vptr->mac_regs);
++		MII_REG_BITS_OFF(ADVERTISE_PAUSE_CAP, MII_ADVERTISE, vptr->mac_regs);
++		MII_REG_BITS_OFF(ADVERTISE_PAUSE_ASYM, MII_ADVERTISE, vptr->mac_regs);
+ 		break;
+ 	default:
+ 		break;
+@@ -880,10 +833,10 @@ static void set_mii_flow_control(struct velocity_info *vptr)
+  */
+ static void mii_set_auto_on(struct velocity_info *vptr)
+ {
+-	if (MII_REG_BITS_IS_ON(BMCR_AUTO, MII_REG_BMCR, vptr->mac_regs))
+-		MII_REG_BITS_ON(BMCR_REAUTO, MII_REG_BMCR, vptr->mac_regs);
++	if (MII_REG_BITS_IS_ON(BMCR_ANENABLE, MII_BMCR, vptr->mac_regs))
++		MII_REG_BITS_ON(BMCR_ANRESTART, MII_BMCR, vptr->mac_regs);
+ 	else
+-		MII_REG_BITS_ON(BMCR_AUTO, MII_REG_BMCR, vptr->mac_regs);
++		MII_REG_BITS_ON(BMCR_ANENABLE, MII_BMCR, vptr->mac_regs);
+ }
+ 
+ static u32 check_connection_type(struct mac_regs __iomem *regs)
+@@ -891,18 +844,6 @@ static u32 check_connection_type(struct mac_regs __iomem *regs)
+ 	u32 status = 0;
+ 	u8 PHYSR0;
+ 	u16 ANAR;
+-
+-
+-	if (MII_REG_BITS_IS_ON(BMCR_AUTO, MII_REG_BMCR, regs)) {
+-		velocity_mii_read(regs, MII_REG_ANAR, &ANAR);
+-
+-		if ((ANAR & (ANAR_TXFD | ANAR_TX | ANAR_10FD | ANAR_10))
+-		    == (ANAR_TXFD | ANAR_TX | ANAR_10FD | ANAR_10)) {
+-			if (MII_REG_BITS_IS_ON(G1000CR_1000 | G1000CR_1000FD, MII_REG_G1000CR, regs))
+-				status |= VELOCITY_AUTONEG_ENABLE;
+-		}
+-	}
+-
+ 	PHYSR0 = readb(&regs->PHYSR0);
+ 
+ 	/*
+@@ -919,6 +860,16 @@ static u32 check_connection_type(struct mac_regs __iomem *regs)
+ 		status |= VELOCITY_SPEED_10;
+ 	else
+ 		status |= VELOCITY_SPEED_100;
++
++	if (MII_REG_BITS_IS_ON(BMCR_ANENABLE, MII_BMCR, regs)) {
++		velocity_mii_read(regs, MII_ADVERTISE, &ANAR);
++		if ((ANAR & (ADVERTISE_100FULL | ADVERTISE_100HALF | ADVERTISE_10FULL | ADVERTISE_10HALF))
++		    == (ADVERTISE_100FULL | ADVERTISE_100HALF | ADVERTISE_10FULL | ADVERTISE_10HALF)) {
++			if (MII_REG_BITS_IS_ON(ADVERTISE_1000HALF | ADVERTISE_1000FULL, MII_CTRL1000, regs))
++				status |= VELOCITY_AUTONEG_ENABLE;
++		}
++	}
++
+ 	return status;
+ }
+ 
+@@ -945,8 +896,8 @@ static int velocity_set_media_mode(struct velocity_info *vptr, u32 mii_status)
+ 
+ 	/*
+ 	   Check if new status is consisent with current status
+-	   if (((mii_status & curr_status) & VELOCITY_AUTONEG_ENABLE)
+-	   || (mii_status==curr_status)) {
++	   if (((mii_status & curr_status) & VELOCITY_AUTONEG_ENABLE) ||
++	       (mii_status==curr_status)) {
+ 	   vptr->mii_status=mii_check_media_mode(vptr->mac_regs);
+ 	   vptr->mii_status=check_connection_type(vptr->mac_regs);
+ 	   VELOCITY_PRT(MSG_LEVEL_INFO, "Velocity link no change\n");
+@@ -955,7 +906,7 @@ static int velocity_set_media_mode(struct velocity_info *vptr, u32 mii_status)
+ 	 */
+ 
+ 	if (PHYID_GET_PHY_ID(vptr->phy_id) == PHYID_CICADA_CS8201)
+-		MII_REG_BITS_ON(AUXCR_MDPPS, MII_REG_AUXCR, vptr->mac_regs);
++		MII_REG_BITS_ON(AUXCR_MDPPS, MII_NCONFIG, vptr->mac_regs);
+ 
+ 	/*
+ 	 *	If connection type is AUTO
+@@ -965,9 +916,9 @@ static int velocity_set_media_mode(struct velocity_info *vptr, u32 mii_status)
+ 		/* clear force MAC mode bit */
+ 		BYTE_REG_BITS_OFF(CHIPGCR_FCMODE, &regs->CHIPGCR);
+ 		/* set duplex mode of MAC according to duplex mode of MII */
+-		MII_REG_BITS_ON(ANAR_TXFD | ANAR_TX | ANAR_10FD | ANAR_10, MII_REG_ANAR, vptr->mac_regs);
+-		MII_REG_BITS_ON(G1000CR_1000FD | G1000CR_1000, MII_REG_G1000CR, vptr->mac_regs);
+-		MII_REG_BITS_ON(BMCR_SPEED1G, MII_REG_BMCR, vptr->mac_regs);
++		MII_REG_BITS_ON(ADVERTISE_100FULL | ADVERTISE_100HALF | ADVERTISE_10FULL | ADVERTISE_10HALF, MII_ADVERTISE, vptr->mac_regs);
++		MII_REG_BITS_ON(ADVERTISE_1000FULL | ADVERTISE_1000HALF, MII_CTRL1000, vptr->mac_regs);
++		MII_REG_BITS_ON(BMCR_SPEED1000, MII_BMCR, vptr->mac_regs);
+ 
+ 		/* enable AUTO-NEGO mode */
+ 		mii_set_auto_on(vptr);
+@@ -1002,31 +953,31 @@ static int velocity_set_media_mode(struct velocity_info *vptr, u32 mii_status)
+ 				BYTE_REG_BITS_ON(TCR_TB2BDIS, &regs->TCR);
+ 		}
+ 
+-		MII_REG_BITS_OFF(G1000CR_1000FD | G1000CR_1000, MII_REG_G1000CR, vptr->mac_regs);
++		MII_REG_BITS_OFF(ADVERTISE_1000FULL | ADVERTISE_1000HALF, MII_CTRL1000, vptr->mac_regs);
+ 
+ 		if (!(mii_status & VELOCITY_DUPLEX_FULL) && (mii_status & VELOCITY_SPEED_10))
+ 			BYTE_REG_BITS_OFF(TESTCFG_HBDIS, &regs->TESTCFG);
+ 		else
+ 			BYTE_REG_BITS_ON(TESTCFG_HBDIS, &regs->TESTCFG);
+ 
+-		/* MII_REG_BITS_OFF(BMCR_SPEED1G, MII_REG_BMCR, vptr->mac_regs); */
+-		velocity_mii_read(vptr->mac_regs, MII_REG_ANAR, &ANAR);
+-		ANAR &= (~(ANAR_TXFD | ANAR_TX | ANAR_10FD | ANAR_10));
++		/* MII_REG_BITS_OFF(BMCR_SPEED1000, MII_BMCR, vptr->mac_regs); */
++		velocity_mii_read(vptr->mac_regs, MII_ADVERTISE, &ANAR);
++		ANAR &= (~(ADVERTISE_100FULL | ADVERTISE_100HALF | ADVERTISE_10FULL | ADVERTISE_10HALF));
+ 		if (mii_status & VELOCITY_SPEED_100) {
+ 			if (mii_status & VELOCITY_DUPLEX_FULL)
+-				ANAR |= ANAR_TXFD;
++				ANAR |= ADVERTISE_100FULL;
+ 			else
+-				ANAR |= ANAR_TX;
++				ANAR |= ADVERTISE_100HALF;
+ 		} else {
+ 			if (mii_status & VELOCITY_DUPLEX_FULL)
+-				ANAR |= ANAR_10FD;
++				ANAR |= ADVERTISE_10FULL;
+ 			else
+-				ANAR |= ANAR_10;
++				ANAR |= ADVERTISE_10HALF;
+ 		}
+-		velocity_mii_write(vptr->mac_regs, MII_REG_ANAR, ANAR);
++		velocity_mii_write(vptr->mac_regs, MII_ADVERTISE, ANAR);
+ 		/* enable AUTO-NEGO mode */
+ 		mii_set_auto_on(vptr);
+-		/* MII_REG_BITS_ON(BMCR_AUTO, MII_REG_BMCR, vptr->mac_regs); */
++		/* MII_REG_BITS_ON(BMCR_ANENABLE, MII_BMCR, vptr->mac_regs); */
+ 	}
+ 	/* vptr->mii_status=mii_check_media_mode(vptr->mac_regs); */
+ 	/* vptr->mii_status=check_connection_type(vptr->mac_regs); */
+@@ -1226,36 +1177,36 @@ static void mii_init(struct velocity_info *vptr, u32 mii_status)
+ 		/*
+ 		 *	Reset to hardware default
+ 		 */
+-		MII_REG_BITS_OFF((ANAR_ASMDIR | ANAR_PAUSE), MII_REG_ANAR, vptr->mac_regs);
++		MII_REG_BITS_OFF((ADVERTISE_PAUSE_ASYM | ADVERTISE_PAUSE_CAP), MII_ADVERTISE, vptr->mac_regs);
+ 		/*
+ 		 *	Turn on ECHODIS bit in NWay-forced full mode and turn it
+ 		 *	off it in NWay-forced half mode for NWay-forced v.s.
+ 		 *	legacy-forced issue.
+ 		 */
+ 		if (vptr->mii_status & VELOCITY_DUPLEX_FULL)
+-			MII_REG_BITS_ON(TCSR_ECHODIS, MII_REG_TCSR, vptr->mac_regs);
++			MII_REG_BITS_ON(TCSR_ECHODIS, MII_SREVISION, vptr->mac_regs);
+ 		else
+-			MII_REG_BITS_OFF(TCSR_ECHODIS, MII_REG_TCSR, vptr->mac_regs);
++			MII_REG_BITS_OFF(TCSR_ECHODIS, MII_SREVISION, vptr->mac_regs);
+ 		/*
+ 		 *	Turn on Link/Activity LED enable bit for CIS8201
+ 		 */
+-		MII_REG_BITS_ON(PLED_LALBE, MII_REG_PLED, vptr->mac_regs);
++		MII_REG_BITS_ON(PLED_LALBE, MII_TPISTATUS, vptr->mac_regs);
+ 		break;
+ 	case PHYID_VT3216_32BIT:
+ 	case PHYID_VT3216_64BIT:
+ 		/*
+ 		 *	Reset to hardware default
+ 		 */
+-		MII_REG_BITS_ON((ANAR_ASMDIR | ANAR_PAUSE), MII_REG_ANAR, vptr->mac_regs);
++		MII_REG_BITS_ON((ADVERTISE_PAUSE_ASYM | ADVERTISE_PAUSE_CAP), MII_ADVERTISE, vptr->mac_regs);
+ 		/*
+ 		 *	Turn on ECHODIS bit in NWay-forced full mode and turn it
+ 		 *	off it in NWay-forced half mode for NWay-forced v.s.
+ 		 *	legacy-forced issue
+ 		 */
+ 		if (vptr->mii_status & VELOCITY_DUPLEX_FULL)
+-			MII_REG_BITS_ON(TCSR_ECHODIS, MII_REG_TCSR, vptr->mac_regs);
++			MII_REG_BITS_ON(TCSR_ECHODIS, MII_SREVISION, vptr->mac_regs);
+ 		else
+-			MII_REG_BITS_OFF(TCSR_ECHODIS, MII_REG_TCSR, vptr->mac_regs);
++			MII_REG_BITS_OFF(TCSR_ECHODIS, MII_SREVISION, vptr->mac_regs);
+ 		break;
+ 
+ 	case PHYID_MARVELL_1000:
+@@ -1267,18 +1218,78 @@ static void mii_init(struct velocity_info *vptr, u32 mii_status)
+ 		/*
+ 		 *	Reset to hardware default
+ 		 */
+-		MII_REG_BITS_ON((ANAR_ASMDIR | ANAR_PAUSE), MII_REG_ANAR, vptr->mac_regs);
++		MII_REG_BITS_ON((ADVERTISE_PAUSE_ASYM | ADVERTISE_PAUSE_CAP), MII_ADVERTISE, vptr->mac_regs);
+ 		break;
+ 	default:
+ 		;
+ 	}
+-	velocity_mii_read(vptr->mac_regs, MII_REG_BMCR, &BMCR);
+-	if (BMCR & BMCR_ISO) {
+-		BMCR &= ~BMCR_ISO;
+-		velocity_mii_write(vptr->mac_regs, MII_REG_BMCR, BMCR);
++	velocity_mii_read(vptr->mac_regs, MII_BMCR, &BMCR);
++	if (BMCR & BMCR_ISOLATE) {
++		BMCR &= ~BMCR_ISOLATE;
++		velocity_mii_write(vptr->mac_regs, MII_BMCR, BMCR);
+ 	}
+ }
+ 
++/**
++ * setup_queue_timers	-	Setup interrupt timers
++ *
++ * Setup interrupt frequency during suppression (timeout if the frame
++ * count isn't filled).
++ */
++static void setup_queue_timers(struct velocity_info *vptr)
++{
++	/* Only for newer revisions */
++	if (vptr->rev_id >= REV_ID_VT3216_A0) {
++		u8 txqueue_timer = 0;
++		u8 rxqueue_timer = 0;
++
++		if (vptr->mii_status & (VELOCITY_SPEED_1000 |
++				VELOCITY_SPEED_100)) {
++			txqueue_timer = vptr->options.txqueue_timer;
++			rxqueue_timer = vptr->options.rxqueue_timer;
++		}
++
++		writeb(txqueue_timer, &vptr->mac_regs->TQETMR);
++		writeb(rxqueue_timer, &vptr->mac_regs->RQETMR);
++	}
++}
++/**
++ * setup_adaptive_interrupts  -  Setup interrupt suppression
++ *
++ * @vptr velocity adapter
++ *
++ * The velocity is able to suppress interrupt during high interrupt load.
++ * This function turns on that feature.
++ */
++static void setup_adaptive_interrupts(struct velocity_info *vptr)
++{
++	struct mac_regs __iomem *regs = vptr->mac_regs;
++	u16 tx_intsup = vptr->options.tx_intsup;
++	u16 rx_intsup = vptr->options.rx_intsup;
++
++	/* Setup default interrupt mask (will be changed below) */
++	vptr->int_mask = INT_MASK_DEF;
++
++	/* Set Tx Interrupt Suppression Threshold */
++	writeb(CAMCR_PS0, &regs->CAMCR);
++	if (tx_intsup != 0) {
++		vptr->int_mask &= ~(ISR_PTXI | ISR_PTX0I | ISR_PTX1I |
++				ISR_PTX2I | ISR_PTX3I);
++		writew(tx_intsup, &regs->ISRCTL);
++	} else
++		writew(ISRCTL_TSUPDIS, &regs->ISRCTL);
++
++	/* Set Rx Interrupt Suppression Threshold */
++	writeb(CAMCR_PS1, &regs->CAMCR);
++	if (rx_intsup != 0) {
++		vptr->int_mask &= ~ISR_PRXI;
++		writew(rx_intsup, &regs->ISRCTL);
++	} else
++		writew(ISRCTL_RSUPDIS, &regs->ISRCTL);
++
++	/* Select page to interrupt hold timer */
++	writeb(0, &regs->CAMCR);
++}
+ 
+ /**
+  *	velocity_init_registers	-	initialise MAC registers
+@@ -1341,10 +1352,9 @@ static void velocity_init_registers(struct velocity_info *vptr,
+ 		 *	clear Pre_ACPI bit.
+ 		 */
+ 		BYTE_REG_BITS_OFF(CFGA_PACPI, &(regs->CFGA));
+-		/*
+ 		mac_set_rx_thresh(regs, vptr->options.rx_thresh);
+ 		mac_set_dma_length(regs, vptr->options.DMA_length);
+-		*/
++
+ 		writeb(WOLCFG_SAM | WOLCFG_SAB, &regs->WOLCFGSet);
+ 		/*
+ 		 *	Back off algorithm use original IEEE standard
+@@ -1366,7 +1376,8 @@ static void velocity_init_registers(struct velocity_info *vptr,
+ 		 */
+ 		enable_mii_autopoll(regs);
+ 
+-		vptr->int_mask = INT_MASK_DEF;
++		setup_adaptive_interrupts(vptr);
++
+ 		writel(vptr->rx.pool_dma, &regs->RDBaseLo);
+ 		writew(vptr->options.numrx - 1, &regs->RDCSize);
+ 		mac_rx_queue_run(regs);
+@@ -1503,7 +1514,8 @@ static int velocity_alloc_rx_buf(struct velocity_info *vptr, int idx)
+ 	 *	Do the gymnastics to get the buffer head for data at
+ 	 *	64byte alignment.
+ 	 */
+-	skb_reserve(rd_info->skb, (unsigned long) rd_info->skb->data & 63);
++	skb_reserve(rd_info->skb,
++			64 - ((unsigned long) rd_info->skb->data & 63));
+ 	rd_info->skb_dma = pci_map_single(vptr->pdev, rd_info->skb->data,
+ 					vptr->rx.buf_sz, PCI_DMA_FROMDEVICE);
+ 
+@@ -1622,12 +1634,10 @@ out:
+  */
+ static int velocity_init_td_ring(struct velocity_info *vptr)
+ {
+-	dma_addr_t curr;
+ 	int j;
+ 
+ 	/* Init the TD ring entries */
+ 	for (j = 0; j < vptr->tx.numq; j++) {
+-		curr = vptr->tx.pool_dma[j];
+ 
+ 		vptr->tx.infos[j] = kcalloc(vptr->options.numtx,
+ 					    sizeof(struct velocity_td_info),
+@@ -1693,21 +1703,27 @@ err_free_dma_rings_0:
+  *	Release an transmit buffer. If the buffer was preallocated then
+  *	recycle it, if not then unmap the buffer.
+  */
+-static void velocity_free_tx_buf(struct velocity_info *vptr, struct velocity_td_info *tdinfo)
++static void velocity_free_tx_buf(struct velocity_info *vptr,
++		struct velocity_td_info *tdinfo, struct tx_desc *td)
+ {
+ 	struct sk_buff *skb = tdinfo->skb;
+-	int i;
+-	int pktlen;
+ 
+ 	/*
+ 	 *	Don't unmap the pre-allocated tx_bufs
+ 	 */
+ 	if (tdinfo->skb_dma) {
++		int i;
+ 
+-		pktlen = max_t(unsigned int, skb->len, ETH_ZLEN);
+ 		for (i = 0; i < tdinfo->nskb_dma; i++) {
+-			pci_unmap_single(vptr->pdev, tdinfo->skb_dma[i], pktlen, PCI_DMA_TODEVICE);
+-			tdinfo->skb_dma[i] = 0;
++			size_t pktlen = max_t(size_t, skb->len, ETH_ZLEN);
++
++			/* For scatter-gather */
++			if (skb_shinfo(skb)->nr_frags > 0)
++				pktlen = max_t(size_t, pktlen,
++						td->td_buf[i].size & ~TD_QUEUE);
++
++			pci_unmap_single(vptr->pdev, tdinfo->skb_dma[i],
++					le16_to_cpu(pktlen), PCI_DMA_TODEVICE);
+ 		}
+ 	}
+ 	dev_kfree_skb_irq(skb);
+@@ -1821,6 +1837,8 @@ static void velocity_error(struct velocity_info *vptr, int status)
+ 				BYTE_REG_BITS_OFF(TESTCFG_HBDIS, &regs->TESTCFG);
+ 			else
+ 				BYTE_REG_BITS_ON(TESTCFG_HBDIS, &regs->TESTCFG);
++
++			setup_queue_timers(vptr);
+ 		}
+ 		/*
+ 		 *	Get link status from PHYSR0
+@@ -1860,13 +1878,12 @@ static void velocity_error(struct velocity_info *vptr, int status)
+ /**
+  *	tx_srv		-	transmit interrupt service
+  *	@vptr; Velocity
+- *	@status:
+  *
+  *	Scan the queues looking for transmitted packets that
+  *	we can complete and clean up. Update any statistics as
+  *	necessary/
+  */
+-static int velocity_tx_srv(struct velocity_info *vptr, u32 status)
++static int velocity_tx_srv(struct velocity_info *vptr)
+ {
+ 	struct tx_desc *td;
+ 	int qnum;
+@@ -1907,7 +1924,7 @@ static int velocity_tx_srv(struct velocity_info *vptr, u32 status)
+ 				stats->tx_packets++;
+ 				stats->tx_bytes += tdinfo->skb->len;
+ 			}
+-			velocity_free_tx_buf(vptr, tdinfo);
++			velocity_free_tx_buf(vptr, tdinfo, td);
+ 			vptr->tx.used[qnum]--;
+ 		}
+ 		vptr->tx.tail[qnum] = idx;
+@@ -1919,8 +1936,8 @@ static int velocity_tx_srv(struct velocity_info *vptr, u32 status)
+ 	 *	Look to see if we should kick the transmit network
+ 	 *	layer for more work.
+ 	 */
+-	if (netif_queue_stopped(vptr->dev) && (full == 0)
+-	    && (!(vptr->mii_status & VELOCITY_LINK_FAIL))) {
++	if (netif_queue_stopped(vptr->dev) && (full == 0) &&
++	    (!(vptr->mii_status & VELOCITY_LINK_FAIL))) {
+ 		netif_wake_queue(vptr->dev);
+ 	}
+ 	return works;
+@@ -2074,19 +2091,18 @@ static int velocity_receive_frame(struct velocity_info *vptr, int idx)
+ /**
+  *	velocity_rx_srv		-	service RX interrupt
+  *	@vptr: velocity
+- *	@status: adapter status (unused)
+  *
+  *	Walk the receive ring of the velocity adapter and remove
+  *	any received packets from the receive queue. Hand the ring
+  *	slots back to the adapter for reuse.
+  */
+-static int velocity_rx_srv(struct velocity_info *vptr, int status)
++static int velocity_rx_srv(struct velocity_info *vptr, int budget_left)
+ {
+ 	struct net_device_stats *stats = &vptr->dev->stats;
+ 	int rd_curr = vptr->rx.curr;
+ 	int works = 0;
+ 
+-	do {
++	while (works < budget_left) {
+ 		struct rx_desc *rd = vptr->rx.ring + rd_curr;
+ 
+ 		if (!vptr->rx.info[rd_curr].skb)
+@@ -2117,7 +2133,8 @@ static int velocity_rx_srv(struct velocity_info *vptr, int status)
+ 		rd_curr++;
+ 		if (rd_curr >= vptr->options.numrx)
+ 			rd_curr = 0;
+-	} while (++works <= 15);
++		works++;
++	}
+ 
+ 	vptr->rx.curr = rd_curr;
+ 
+@@ -2128,6 +2145,32 @@ static int velocity_rx_srv(struct velocity_info *vptr, int status)
+ 	return works;
+ }
+ 
++static int velocity_poll(struct napi_struct *napi, int budget)
++{
++	struct velocity_info *vptr = container_of(napi,
++			struct velocity_info, napi);
++	unsigned int rx_done;
++	unsigned long flags;
++
++	spin_lock_irqsave(&vptr->lock, flags);
++	/*
++	 * Do rx and tx twice for performance (taken from the VIA
++	 * out-of-tree driver).
++	 */
++	rx_done = velocity_rx_srv(vptr, budget / 2);
++	velocity_tx_srv(vptr);
++	rx_done += velocity_rx_srv(vptr, budget - rx_done);
++	velocity_tx_srv(vptr);
++
++	/* If budget not fully consumed, exit the polling mode */
++	if (rx_done < budget) {
++		napi_complete(napi);
++		mac_enable_int(vptr->mac_regs);
++	}
++	spin_unlock_irqrestore(&vptr->lock, flags);
++
++	return rx_done;
++}
+ 
+ /**
+  *	velocity_intr		-	interrupt callback
+@@ -2144,8 +2187,6 @@ static irqreturn_t velocity_intr(int irq, void *dev_instance)
+ 	struct net_device *dev = dev_instance;
+ 	struct velocity_info *vptr = netdev_priv(dev);
+ 	u32 isr_status;
+-	int max_count = 0;
+-
+ 
+ 	spin_lock(&vptr->lock);
+ 	isr_status = mac_read_isr(vptr->mac_regs);
+@@ -2156,32 +2197,20 @@ static irqreturn_t velocity_intr(int irq, void *dev_instance)
+ 		return IRQ_NONE;
+ 	}
+ 
+-	mac_disable_int(vptr->mac_regs);
+-
+-	/*
+-	 *	Keep processing the ISR until we have completed
+-	 *	processing and the isr_status becomes zero
+-	 */
++	/* Ack the interrupt */
++	mac_write_isr(vptr->mac_regs, isr_status);
+ 
+-	while (isr_status != 0) {
+-		mac_write_isr(vptr->mac_regs, isr_status);
+-		if (isr_status & (~(ISR_PRXI | ISR_PPRXI | ISR_PTXI | ISR_PPTXI)))
+-			velocity_error(vptr, isr_status);
+-		if (isr_status & (ISR_PRXI | ISR_PPRXI))
+-			max_count += velocity_rx_srv(vptr, isr_status);
+-		if (isr_status & (ISR_PTXI | ISR_PPTXI))
+-			max_count += velocity_tx_srv(vptr, isr_status);
+-		isr_status = mac_read_isr(vptr->mac_regs);
+-		if (max_count > vptr->options.int_works) {
+-			printk(KERN_WARNING "%s: excessive work at interrupt.\n",
+-				dev->name);
+-			max_count = 0;
+-		}
++	if (likely(napi_schedule_prep(&vptr->napi))) {
++		mac_disable_int(vptr->mac_regs);
++		__napi_schedule(&vptr->napi);
+ 	}
++
++	if (isr_status & (~(ISR_PRXI | ISR_PPRXI | ISR_PTXI | ISR_PPTXI)))
++		velocity_error(vptr, isr_status);
++
+ 	spin_unlock(&vptr->lock);
+-	mac_enable_int(vptr->mac_regs);
+-	return IRQ_HANDLED;
+ 
++	return IRQ_HANDLED;
+ }
+ 
+ /**
+@@ -2206,11 +2235,9 @@ static int velocity_open(struct net_device *dev)
+ 	/* Ensure chip is running */
+ 	pci_set_power_state(vptr->pdev, PCI_D0);
+ 
+-	velocity_give_many_rx_descs(vptr);
+-
+ 	velocity_init_registers(vptr, VELOCITY_INIT_COLD);
+ 
+-	ret = request_irq(vptr->pdev->irq, &velocity_intr, IRQF_SHARED,
++	ret = request_irq(vptr->pdev->irq, velocity_intr, IRQF_SHARED,
+ 			  dev->name, dev);
+ 	if (ret < 0) {
+ 		/* Power down the chip */
+@@ -2219,8 +2246,11 @@ static int velocity_open(struct net_device *dev)
+ 		goto out;
+ 	}
+ 
++	velocity_give_many_rx_descs(vptr);
++
+ 	mac_enable_int(vptr->mac_regs);
+ 	netif_start_queue(dev);
++	napi_enable(&vptr->napi);
+ 	vptr->flags |= VELOCITY_FLAGS_OPENED;
+ out:
+ 	return ret;
+@@ -2307,10 +2337,10 @@ static int velocity_change_mtu(struct net_device *dev, int new_mtu)
+ 
+ 		dev->mtu = new_mtu;
+ 
+-		velocity_give_many_rx_descs(vptr);
+-
+ 		velocity_init_registers(vptr, VELOCITY_INIT_COLD);
+ 
++		velocity_give_many_rx_descs(vptr);
++
+ 		mac_enable_int(vptr->mac_regs);
+ 		netif_start_queue(dev);
+ 
+@@ -2456,6 +2486,7 @@ static int velocity_close(struct net_device *dev)
+ {
+ 	struct velocity_info *vptr = netdev_priv(dev);
+ 
++	napi_disable(&vptr->napi);
+ 	netif_stop_queue(dev);
+ 	velocity_shutdown(vptr);
+ 
+@@ -2490,14 +2521,22 @@ static netdev_tx_t velocity_xmit(struct sk_buff *skb,
+ 	struct velocity_td_info *tdinfo;
+ 	unsigned long flags;
+ 	int pktlen;
+-	__le16 len;
+-	int index;
++	int index, prev;
++	int i = 0;
+ 
+ 	if (skb_padto(skb, ETH_ZLEN))
+ 		goto out;
+-	pktlen = max_t(unsigned int, skb->len, ETH_ZLEN);
+ 
+-	len = cpu_to_le16(pktlen);
++	/* The hardware can handle at most 7 memory segments, so merge
++	 * the skb if there are more */
++	if (skb_shinfo(skb)->nr_frags > 6 && __skb_linearize(skb)) {
++		kfree_skb(skb);
++		return NETDEV_TX_OK;
++	}
++
++	pktlen = skb_shinfo(skb)->nr_frags == 0 ?
++			max_t(unsigned int, skb->len, ETH_ZLEN) :
++				skb_headlen(skb);
+ 
+ 	spin_lock_irqsave(&vptr->lock, flags);
+ 
+@@ -2514,11 +2553,24 @@ static netdev_tx_t velocity_xmit(struct sk_buff *skb,
+ 	 */
+ 	tdinfo->skb = skb;
+ 	tdinfo->skb_dma[0] = pci_map_single(vptr->pdev, skb->data, pktlen, PCI_DMA_TODEVICE);
+-	td_ptr->tdesc0.len = len;
++	td_ptr->tdesc0.len = cpu_to_le16(pktlen);
+ 	td_ptr->td_buf[0].pa_low = cpu_to_le32(tdinfo->skb_dma[0]);
+ 	td_ptr->td_buf[0].pa_high = 0;
+-	td_ptr->td_buf[0].size = len;
+-	tdinfo->nskb_dma = 1;
++	td_ptr->td_buf[0].size = cpu_to_le16(pktlen);
++
++	/* Handle fragments */
++	for (i = 0; i < skb_shinfo(skb)->nr_frags; i++) {
++		skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
++
++		tdinfo->skb_dma[i + 1] = pci_map_page(vptr->pdev, frag->page,
++				frag->page_offset, frag->size,
++				PCI_DMA_TODEVICE);
++
++		td_ptr->td_buf[i + 1].pa_low = cpu_to_le32(tdinfo->skb_dma[i + 1]);
++		td_ptr->td_buf[i + 1].pa_high = 0;
++		td_ptr->td_buf[i + 1].size = cpu_to_le16(frag->size);
++	}
++	tdinfo->nskb_dma = i + 1;
+ 
+ 	td_ptr->tdesc1.cmd = TCPLS_NORMAL + (tdinfo->nskb_dma + 1) * 16;
+ 
+@@ -2530,8 +2582,8 @@ static netdev_tx_t velocity_xmit(struct sk_buff *skb,
+ 	/*
+ 	 *	Handle hardware checksum
+ 	 */
+-	if ((vptr->flags & VELOCITY_FLAGS_TX_CSUM)
+-				 && (skb->ip_summed == CHECKSUM_PARTIAL)) {
++	if ((dev->features & NETIF_F_IP_CSUM) &&
++	    (skb->ip_summed == CHECKSUM_PARTIAL)) {
+ 		const struct iphdr *ip = ip_hdr(skb);
+ 		if (ip->protocol == IPPROTO_TCP)
+ 			td_ptr->tdesc1.TCR |= TCR0_TCPCK;
+@@ -2539,24 +2591,21 @@ static netdev_tx_t velocity_xmit(struct sk_buff *skb,
+ 			td_ptr->tdesc1.TCR |= (TCR0_UDPCK);
+ 		td_ptr->tdesc1.TCR |= TCR0_IPCK;
+ 	}
+-	{
+ 
+-		int prev = index - 1;
++	prev = index - 1;
++	if (prev < 0)
++		prev = vptr->options.numtx - 1;
++	td_ptr->tdesc0.len |= OWNED_BY_NIC;
++	vptr->tx.used[qnum]++;
++	vptr->tx.curr[qnum] = (index + 1) % vptr->options.numtx;
+ 
+-		if (prev < 0)
+-			prev = vptr->options.numtx - 1;
+-		td_ptr->tdesc0.len |= OWNED_BY_NIC;
+-		vptr->tx.used[qnum]++;
+-		vptr->tx.curr[qnum] = (index + 1) % vptr->options.numtx;
++	if (AVAIL_TD(vptr, qnum) < 1)
++		netif_stop_queue(dev);
+ 
+-		if (AVAIL_TD(vptr, qnum) < 1)
+-			netif_stop_queue(dev);
++	td_ptr = &(vptr->tx.rings[qnum][prev]);
++	td_ptr->td_buf[0].size |= TD_QUEUE;
++	mac_tx_queue_wake(vptr->mac_regs, qnum);
+ 
+-		td_ptr = &(vptr->tx.rings[qnum][prev]);
+-		td_ptr->td_buf[0].size |= TD_QUEUE;
+-		mac_tx_queue_wake(vptr->mac_regs, qnum);
+-	}
+-	dev->trans_start = jiffies;
+ 	spin_unlock_irqrestore(&vptr->lock, flags);
+ out:
+ 	return NETDEV_TX_OK;
+@@ -2598,7 +2647,6 @@ static void __devinit velocity_init_info(struct pci_dev *pdev,
+ 	vptr->tx.numq = info->txqueue;
+ 	vptr->multicast_limit = MCAM_SIZE;
+ 	spin_lock_init(&vptr->lock);
+-	INIT_LIST_HEAD(&vptr->list);
+ }
+ 
+ /**
+@@ -2651,10 +2699,8 @@ static void __devinit velocity_print_info(struct velocity_info *vptr)
+ 	struct net_device *dev = vptr->dev;
+ 
+ 	printk(KERN_INFO "%s: %s\n", dev->name, get_chip_name(vptr->chip_id));
+-	printk(KERN_INFO "%s: Ethernet Address: %2.2X:%2.2X:%2.2X:%2.2X:%2.2X:%2.2X\n",
+-		dev->name,
+-		dev->dev_addr[0], dev->dev_addr[1], dev->dev_addr[2],
+-		dev->dev_addr[3], dev->dev_addr[4], dev->dev_addr[5]);
++	printk(KERN_INFO "%s: Ethernet Address: %pM\n",
++		dev->name, dev->dev_addr);
+ }
+ 
+ static u32 velocity_get_link(struct net_device *dev)
+@@ -2791,12 +2837,10 @@ static int __devinit velocity_found1(struct pci_dev *pdev, const struct pci_devi
+ 	dev->irq = pdev->irq;
+ 	dev->netdev_ops = &velocity_netdev_ops;
+ 	dev->ethtool_ops = &velocity_ethtool_ops;
++	netif_napi_add(dev, &vptr->napi, velocity_poll, VELOCITY_NAPI_WEIGHT);
+ 
+ 	dev->features |= NETIF_F_HW_VLAN_TX | NETIF_F_HW_VLAN_FILTER |
+-		NETIF_F_HW_VLAN_RX;
+-
+-	if (vptr->flags & VELOCITY_FLAGS_TX_CSUM)
+-		dev->features |= NETIF_F_IP_CSUM;
++		NETIF_F_HW_VLAN_RX | NETIF_F_IP_CSUM | NETIF_F_SG;
+ 
+ 	ret = register_netdev(dev);
+ 	if (ret < 0)
+@@ -2813,15 +2857,6 @@ static int __devinit velocity_found1(struct pci_dev *pdev, const struct pci_devi
+ 	/* and leave the chip powered down */
+ 
+ 	pci_set_power_state(pdev, PCI_D3hot);
+-#ifdef CONFIG_PM
+-	{
+-		unsigned long flags;
+-
+-		spin_lock_irqsave(&velocity_dev_list_lock, flags);
+-		list_add(&vptr->list, &velocity_dev_list);
+-		spin_unlock_irqrestore(&velocity_dev_list_lock, flags);
+-	}
+-#endif
+ 	velocity_nics++;
+ out:
+ 	return ret;
+@@ -2929,27 +2964,17 @@ static int velocity_set_wol(struct velocity_info *vptr)
+ 	BYTE_REG_BITS_ON(PWCFG_WOLTYPE, &regs->PWCFGSet);
+ 	BYTE_REG_BITS_ON(PWCFG_LEGACY_WOLEN, &regs->PWCFGSet);
+ 
+-	/* clear PME_EN status, [PMCSR] offset 0x155 */
+-	BYTE_REG_BITS_ON(0x80, &regs->PCI_CFG_SPACE[0x55]);
+ 	writew(0x0FFF, &regs->WOLSRClr);
+-	BYTE_REG_BITS_ON(WOLCFG_PMEOVR, &regs->WOLCFGSet);
+ 
+ 	if (vptr->mii_status & VELOCITY_AUTONEG_ENABLE) {
+ 		if (PHYID_GET_PHY_ID(vptr->phy_id) == PHYID_CICADA_CS8201)
+-			MII_REG_BITS_ON(AUXCR_MDPPS, MII_REG_AUXCR, vptr->mac_regs);
++			MII_REG_BITS_ON(AUXCR_MDPPS, MII_NCONFIG, vptr->mac_regs);
+ 
+-		MII_REG_BITS_OFF(G1000CR_1000FD | G1000CR_1000, MII_REG_G1000CR, vptr->mac_regs);
++		MII_REG_BITS_OFF(ADVERTISE_1000FULL | ADVERTISE_1000HALF, MII_CTRL1000, vptr->mac_regs);
+ 	}
+ 
+-	/* for power saving downshift 1000 to 100/10 connection speed (using AN-force)*/
+-	if (vptr->mii_status & (VELOCITY_SPEED_1000 | VELOCITY_SPEED_100)) {
+-		MII_REG_BITS_OFF(G1000CR_1000FD | G1000CR_1000, MII_REG_G1000CR, vptr->mac_regs);
+-		MII_REG_BITS_OFF((ANAR_TX | ANAR_TXFD), MII_REG_ANAR, vptr->mac_regs);
+-		mii_set_auto_on(vptr);
+-	}
+-/*
+ 	if (vptr->mii_status & VELOCITY_SPEED_1000)
+-		MII_REG_BITS_ON(BMCR_REAUTO, MII_REG_BMCR, vptr->mac_regs);
++		MII_REG_BITS_ON(BMCR_ANRESTART, MII_BMCR, vptr->mac_regs);
+ 
+ 	BYTE_REG_BITS_ON(CHIPGCR_FCMODE, &regs->CHIPGCR);
+ 
+@@ -2959,18 +2984,13 @@ static int velocity_set_wol(struct velocity_info *vptr)
+ 		GCR = (GCR & ~CHIPGCR_FCGMII) | CHIPGCR_FCFDX;
+ 		writeb(GCR, &regs->CHIPGCR);
+ 	}
+-*/
++
+ 	BYTE_REG_BITS_OFF(ISR_PWEI, &regs->ISR);
+ 	/* Turn on SWPTAG just before entering power mode */
+ 	BYTE_REG_BITS_ON(STICKHW_SWPTAG, &regs->STICKHW);
+-
+-	/* turn on PME_EN enable, [PMCSR] offset 0x155 */
+-	BYTE_REG_BITS_ON(0x01, &regs->PCI_CFG_SPACE[0x55]);
+-
+ 	/* Go to bed ..... */
+ 	BYTE_REG_BITS_ON((STICKHW_DS1 | STICKHW_DS0), &regs->STICKHW);
+-	/* PCI configure space offset 0x154: Power state config to D3 */
+-	BYTE_REG_BITS_ON(0x03, &regs->PCI_CFG_SPACE[0x54]);
++
+ 	return 0;
+ }
+ 
+@@ -2993,17 +3013,12 @@ static void velocity_save_context(struct velocity_info *vptr, struct velocity_co
+ 	for (i = MAC_REG_PAR; i < MAC_REG_CR0_CLR; i += 4)
+ 		*((u32 *) (context->mac_reg + i)) = readl(ptr + i);
+ 
+-	for  (i = MAC_REG_MAR; i <= MAC_REG_IMR; i += 4)
+-		*((u32 *) (context->mac_reg + i)) = readl(ptr + i);
+-
+ 	for (i = MAC_REG_MAR; i < MAC_REG_TDCSR_CLR; i += 4)
+ 		*((u32 *) (context->mac_reg + i)) = readl(ptr + i);
+ 
+ 	for (i = MAC_REG_RDBASE_LO; i < MAC_REG_FIFO_TEST0; i += 4)
+ 		*((u32 *) (context->mac_reg + i)) = readl(ptr + i);
+ 
+-	/* Save PCI configure space BMEN */
+-		*((u8 *) (context->mac_reg + 0x104)) = readb(ptr + 0x104);
+ }
+ 
+ static int velocity_suspend(struct pci_dev *pdev, pm_message_t state)
+@@ -3065,7 +3080,7 @@ static void velocity_restore_context(struct velocity_info *vptr, struct velocity
+ 		writeb(*((u8 *) (context->mac_reg + i)), ptr + i);
+ 	}
+ 
+-	for (i = MAC_REG_MAR; i <= MAC_REG_IMR; i += 4)
++	for (i = MAC_REG_MAR; i < MAC_REG_IMR; i += 4)
+ 		writel(*((u32 *) (context->mac_reg + i)), ptr + i);
+ 
+ 	for (i = MAC_REG_RDBASE_LO; i < MAC_REG_FIFO_TEST0; i += 4)
+@@ -3073,41 +3088,30 @@ static void velocity_restore_context(struct velocity_info *vptr, struct velocity
+ 
+ 	for (i = MAC_REG_TDCSR_SET; i <= MAC_REG_RDCSR_SET; i++)
+ 		writeb(*((u8 *) (context->mac_reg + i)), ptr + i);
+-
+-	/* Restore PCI configure space BMEN */
+-	writeb(*((u8 *) (context->mac_reg + 0x104)), ptr + 0x104);
+ }
+ 
+ static int velocity_resume(struct pci_dev *pdev)
+ {
+ 	struct net_device *dev = pci_get_drvdata(pdev);
+ 	struct velocity_info *vptr = netdev_priv(dev);
+-	struct mac_regs __iomem * regs = vptr->mac_regs;
+ 	unsigned long flags;
+ 	int i;
+ 
+ 	if (!netif_running(vptr->dev))
+ 		return 0;
+ 
+-	/* PCI configure space offset 0x154: Power state config to D0 */
+-	BYTE_REG_BITS_OFF(0x03, &regs->PCI_CFG_SPACE[0x54]);
+-
+ 	pci_set_power_state(pdev, PCI_D0);
+ 	pci_enable_wake(pdev, 0, 0);
+ 	pci_restore_state(pdev);
+ 
+-	/*mac_wol_reset(vptr->mac_regs);*/
++	mac_wol_reset(vptr->mac_regs);
+ 
+ 	spin_lock_irqsave(&vptr->lock, flags);
+ 	velocity_restore_context(vptr, &vptr->context);
+-	/*velocity_print_mac_context();*/
+ 	velocity_init_registers(vptr, VELOCITY_INIT_WOL);
+-	/* clear PME_EN status, [PMCSR] offset 0x155 */
+-	BYTE_REG_BITS_ON(0x80, &regs->PCI_CFG_SPACE[0x55]);
+-
+ 	mac_disable_int(vptr->mac_regs);
+ 
+-	velocity_tx_srv(vptr, 0);
++	velocity_tx_srv(vptr);
+ 
+ 	for (i = 0; i < vptr->tx.numq; i++) {
+ 		if (vptr->tx.used[i])
+@@ -3279,72 +3283,127 @@ static int velocity_ethtool_set_wol(struct net_device *dev, struct ethtool_wolin
+ 	return 0;
+ }
+ 
+-#ifdef VELOCITY_DEBUG
+-void 
+-velocity_print_mac_context() {
+-	unsigned int i;
+-	printk("\n            0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F\n");
+-	printk("==========================================================");
+-	for (i =0;i<0x200;i++)
+-	{
+-		if((i%16 ==0 ))
+-		{
+-			printk("\n");
+-			printk("0xd8004%03x:",i);
+-		}
+-		printk("%02X ", *(volatile unsigned char *)(ETHERNET_MAC_0_CFG_BASE_ADDR + i));
+-	}
++static u32 velocity_get_msglevel(struct net_device *dev)
++{
++	return msglevel;
+ }
+ 
+-void 
+-velocity_print_TD(struct velocity_info *vptr) {
++static void velocity_set_msglevel(struct net_device *dev, u32 value)
++{
++	 msglevel = value;
++}
+ 
+-	unsigned int i;
+-	unsigned int j;
+-	printk("\n   TD    \n");
+-	printk("==========================================================\n");
+-	for (i =0;i<1;i++)
+-	{
++static int get_pending_timer_val(int val)
++{
++	int mult_bits = val >> 6;
++	int mult = 1;
+ 
+-		
+-		printk("tx_info.numq: %8X\n",vptr->tx.numq);
+-		printk("tx_info.used[%d]: %8X\n", i, vptr->tx.used[i]);
+-		printk("tx_info.curr[%d]: %8X\n", i, vptr->tx.curr[i]);
+-		printk("tx_info.tail[%d]: %8X\n", i, vptr->tx.tail[i]);
+-		printk("tx_info.pool_dma[%d]: %8X\n", i, vptr->tx.pool_dma[i]);
+-		
+-		for ( j =0 ; j<0x500; j++)
+-		{
+-			printk(" %.8X ",  *(volatile unsigned int *)(phys_to_virt(vptr->tx.pool_dma[i]) + (j*4)));
+-			if(j % 4 == 3)
+-				printk("\n");
+-		}
+-		//printk("%02X ", *(volatile unsigned char *)(ETHERNET_MAC_0_CFG_BASE_ADDR + i));
++	switch (mult_bits)
++	{
++	case 1:
++		mult = 4; break;
++	case 2:
++		mult = 16; break;
++	case 3:
++		mult = 64; break;
++	case 0:
++	default:
++		break;
+ 	}
++
++	return (val & 0x3f) * mult;
+ }
+ 
++static void set_pending_timer_val(int *val, u32 us)
++{
++	u8 mult = 0;
++	u8 shift = 0;
+ 
+-#endif
++	if (us >= 0x3f) {
++		mult = 1; /* mult with 4 */
++		shift = 2;
++	}
++	if (us >= 0x3f * 4) {
++		mult = 2; /* mult with 16 */
++		shift = 4;
++	}
++	if (us >= 0x3f * 16) {
++		mult = 3; /* mult with 64 */
++		shift = 6;
++	}
+ 
+-static u32 velocity_get_msglevel(struct net_device *dev)
++	*val = (mult << 6) | ((us >> shift) & 0x3f);
++}
++
++
++static int velocity_get_coalesce(struct net_device *dev,
++		struct ethtool_coalesce *ecmd)
+ {
+-	return msglevel;
++	struct velocity_info *vptr = netdev_priv(dev);
++
++	ecmd->tx_max_coalesced_frames = vptr->options.tx_intsup;
++	ecmd->rx_max_coalesced_frames = vptr->options.rx_intsup;
++
++	ecmd->rx_coalesce_usecs = get_pending_timer_val(vptr->options.rxqueue_timer);
++	ecmd->tx_coalesce_usecs = get_pending_timer_val(vptr->options.txqueue_timer);
++
++	return 0;
+ }
+ 
+-static void velocity_set_msglevel(struct net_device *dev, u32 value)
++static int velocity_set_coalesce(struct net_device *dev,
++		struct ethtool_coalesce *ecmd)
+ {
+-	 msglevel = value;
++	struct velocity_info *vptr = netdev_priv(dev);
++	int max_us = 0x3f * 64;
++	unsigned long flags;
++
++	/* 6 bits of  */
++	if (ecmd->tx_coalesce_usecs > max_us)
++		return -EINVAL;
++	if (ecmd->rx_coalesce_usecs > max_us)
++		return -EINVAL;
++
++	if (ecmd->tx_max_coalesced_frames > 0xff)
++		return -EINVAL;
++	if (ecmd->rx_max_coalesced_frames > 0xff)
++		return -EINVAL;
++
++	vptr->options.rx_intsup = ecmd->rx_max_coalesced_frames;
++	vptr->options.tx_intsup = ecmd->tx_max_coalesced_frames;
++
++	set_pending_timer_val(&vptr->options.rxqueue_timer,
++			ecmd->rx_coalesce_usecs);
++	set_pending_timer_val(&vptr->options.txqueue_timer,
++			ecmd->tx_coalesce_usecs);
++
++	/* Setup the interrupt suppression and queue timers */
++	spin_lock_irqsave(&vptr->lock, flags);
++	mac_disable_int(vptr->mac_regs);
++	setup_adaptive_interrupts(vptr);
++	setup_queue_timers(vptr);
++
++	mac_write_int_mask(vptr->int_mask, vptr->mac_regs);
++	mac_clear_isr(vptr->mac_regs);
++	mac_enable_int(vptr->mac_regs);
++	spin_unlock_irqrestore(&vptr->lock, flags);
++
++	return 0;
+ }
+ 
+ static const struct ethtool_ops velocity_ethtool_ops = {
+ 	.get_settings	=	velocity_get_settings,
+ 	.set_settings	=	velocity_set_settings,
+ 	.get_drvinfo	=	velocity_get_drvinfo,
++	.set_tx_csum	=	ethtool_op_set_tx_csum,
++	.get_tx_csum	=	ethtool_op_get_tx_csum,
+ 	.get_wol	=	velocity_ethtool_get_wol,
+ 	.set_wol	=	velocity_ethtool_set_wol,
+ 	.get_msglevel	=	velocity_get_msglevel,
+ 	.set_msglevel	=	velocity_set_msglevel,
++	.set_sg 	=	ethtool_op_set_sg,
+ 	.get_link	=	velocity_get_link,
++	.get_coalesce	=	velocity_get_coalesce,
++	.set_coalesce	=	velocity_set_coalesce,
+ 	.begin		=	velocity_ethtool_up,
+ 	.complete	=	velocity_ethtool_down
+ };
+@@ -3355,20 +3414,10 @@ static int velocity_netdev_event(struct notifier_block *nb, unsigned long notifi
+ {
+ 	struct in_ifaddr *ifa = (struct in_ifaddr *) ptr;
+ 	struct net_device *dev = ifa->ifa_dev->dev;
+-	struct velocity_info *vptr;
+-	unsigned long flags;
+-
+-	if (dev_net(dev) != &init_net)
+-		return NOTIFY_DONE;
+ 
+-	spin_lock_irqsave(&velocity_dev_list_lock, flags);
+-	list_for_each_entry(vptr, &velocity_dev_list, list) {
+-		if (vptr->dev == dev) {
+-			velocity_get_ip(vptr);
+-			break;
+-		}
+-	}
+-	spin_unlock_irqrestore(&velocity_dev_list_lock, flags);
++	if (dev_net(dev) == &init_net &&
++	    dev->netdev_ops == &velocity_netdev_ops)
++		velocity_get_ip(netdev_priv(dev));
+ 
+ 	return NOTIFY_DONE;
+ }
+diff --git a/kernel/drivers/net/via-velocity.h b/kernel/drivers/net/via-velocity.h
+index c6ba7f1..c381911 100755
+--- a/kernel/drivers/net/via-velocity.h
++++ b/kernel/drivers/net/via-velocity.h
+@@ -29,10 +29,10 @@
+ 
+ #define VELOCITY_NAME          "via-velocity"
+ #define VELOCITY_FULL_DRV_NAM  "VIA Networking Velocity Family Gigabit Ethernet Adapter Driver"
+-#define VELOCITY_VERSION       "1.14"
+-/*#define VELOCITY_DEBUG*/
++#define VELOCITY_VERSION       "1.15"
+ 
+ #define VELOCITY_IO_SIZE	256
++#define VELOCITY_NAPI_WEIGHT	64
+ 
+ #define PKT_BUF_SZ          1540
+ 
+@@ -1006,7 +1006,8 @@ struct mac_regs {
+ 
+ 	volatile __le32 RDBaseLo;	/* 0x38 */
+ 	volatile __le16 RDIdx;		/* 0x3C */
+-	volatile __le16 reserved_3E;
++	volatile u8 TQETMR;		/* 0x3E, VT3216 and above only */
++	volatile u8 RQETMR;		/* 0x3F, VT3216 and above only */
+ 
+ 	volatile __le32 TDBaseLo[4];	/* 0x40 */
+ 
+@@ -1095,13 +1096,6 @@ struct mac_regs {
+ 
+ 	volatile __le16 PatternCRC[8];	/* 0xB0 */
+ 	volatile __le32 ByteMask[4][4];	/* 0xC0 */
+-    volatile u8 PCI_CFG_SPACE[0x58];	/* 0x100  */
+-	volatile __le32 VEE_CFG;				/* 0x158 */
+-	volatile __le32 VEE_CFG1;				/* 0x15C */
+-	volatile u8 Mac_Mode0;				/* 0x160 */
+-	volatile u8 Mac_Resv;				/* 0x161 */
+-	volatile u8 Mac_Mode2;				/* 0x162 */
+-	volatile u8 Mac_Mode3;				/* 0x163 */
+ } __attribute__ ((__packed__));
+ 
+ 
+@@ -1246,86 +1240,16 @@ struct velocity_context {
+ 	u32 pattern[8];
+ };
+ 
+-
+-/*
+- *	MII registers.
+- */
+-
+-
+ /*
+  *	Registers in the MII (offset unit is WORD)
+  */
+ 
+-#define MII_REG_BMCR        0x00	// physical address
+-#define MII_REG_BMSR        0x01	//
+-#define MII_REG_PHYID1      0x02	// OUI
+-#define MII_REG_PHYID2      0x03	// OUI + Module ID + REV ID
+-#define MII_REG_ANAR        0x04	//
+-#define MII_REG_ANLPAR      0x05	//
+-#define MII_REG_G1000CR     0x09	//
+-#define MII_REG_G1000SR     0x0A	//
+-#define MII_REG_MODCFG      0x10	//
+-#define MII_REG_TCSR        0x16	//
+-#define MII_REG_PLED        0x1B	//
+-// NS, MYSON only
+-#define MII_REG_PCR         0x17	//
+-// ESI only
+-#define MII_REG_PCSR        0x17	//
+-#define MII_REG_AUXCR       0x1C	//
+-
+ // Marvell 88E1000/88E1000S
+ #define MII_REG_PSCR        0x10	// PHY specific control register
+ 
+ //
+-// Bits in the BMCR register
++// Bits in the Silicon revision register
+ //
+-#define BMCR_RESET          0x8000	//
+-#define BMCR_LBK            0x4000	//
+-#define BMCR_SPEED100       0x2000	//
+-#define BMCR_AUTO           0x1000	//
+-#define BMCR_PD             0x0800	//
+-#define BMCR_ISO            0x0400	//
+-#define BMCR_REAUTO         0x0200	//
+-#define BMCR_FDX            0x0100	//
+-#define BMCR_SPEED1G        0x0040	//
+-//
+-// Bits in the BMSR register
+-//
+-#define BMSR_AUTOCM         0x0020	//
+-#define BMSR_LNK            0x0004	//
+-
+-//
+-// Bits in the ANAR register
+-//
+-#define ANAR_ASMDIR         0x0800	// Asymmetric PAUSE support
+-#define ANAR_PAUSE          0x0400	// Symmetric PAUSE Support
+-#define ANAR_T4             0x0200	//
+-#define ANAR_TXFD           0x0100	//
+-#define ANAR_TX             0x0080	//
+-#define ANAR_10FD           0x0040	//
+-#define ANAR_10             0x0020	//
+-//
+-// Bits in the ANLPAR register
+-//
+-#define ANLPAR_ASMDIR       0x0800	// Asymmetric PAUSE support
+-#define ANLPAR_PAUSE        0x0400	// Symmetric PAUSE Support
+-#define ANLPAR_T4           0x0200	//
+-#define ANLPAR_TXFD         0x0100	//
+-#define ANLPAR_TX           0x0080	//
+-#define ANLPAR_10FD         0x0040	//
+-#define ANLPAR_10           0x0020	//
+-
+-//
+-// Bits in the G1000CR register
+-//
+-#define G1000CR_1000FD      0x0200	// PHY is 1000-T Full-duplex capable
+-#define G1000CR_1000        0x0100	// PHY is 1000-T Half-duplex capable
+-
+-//
+-// Bits in the G1000SR register
+-//
+-#define G1000SR_1000FD      0x0800	// LP PHY is 1000-T Full-duplex capable
+-#define G1000SR_1000        0x0400	// LP PHY is 1000-T Half-duplex capable
+ 
+ #define TCSR_ECHODIS        0x2000	//
+ #define AUXCR_MDPPS         0x0004	//
+@@ -1344,7 +1268,6 @@ struct velocity_context {
+ 
+ #define PHYID_REV_ID_MASK   0x0000000FUL
+ 
+-#define PHYID_GET_PHY_REV_ID(i)     ((i) & PHYID_REV_ID_MASK)
+ #define PHYID_GET_PHY_ID(i)         ((i) & ~PHYID_REV_ID_MASK)
+ 
+ #define MII_REG_BITS_ON(x,i,p) do {\
+@@ -1368,8 +1291,8 @@ struct velocity_context {
+ 
+ #define MII_GET_PHY_ID(p) ({\
+     u32 id;\
+-    velocity_mii_read((p),MII_REG_PHYID2,(u16 *) &id);\
+-    velocity_mii_read((p),MII_REG_PHYID1,((u16 *) &id)+1);\
++    velocity_mii_read((p),MII_PHYSID2,(u16 *) &id);\
++    velocity_mii_read((p),MII_PHYSID1,((u16 *) &id)+1);\
+     (id);})
+ 
+ /*
+@@ -1429,7 +1352,6 @@ enum velocity_msg_level {
+  */
+ 
+ #define     VELOCITY_FLAGS_TAGGING         0x00000001UL
+-#define     VELOCITY_FLAGS_TX_CSUM         0x00000002UL
+ #define     VELOCITY_FLAGS_RX_CSUM         0x00000004UL
+ #define     VELOCITY_FLAGS_IP_ALIGN        0x00000008UL
+ #define     VELOCITY_FLAGS_VAL_PKT_LEN     0x00000010UL
+@@ -1499,6 +1421,10 @@ struct velocity_opt {
+ 	int rx_bandwidth_hi;
+ 	int rx_bandwidth_lo;
+ 	int rx_bandwidth_en;
++	int rxqueue_timer;
++	int txqueue_timer;
++	int tx_intsup;
++	int rx_intsup;
+ 	u32 flags;
+ };
+ 
+@@ -1507,8 +1433,6 @@ struct velocity_opt {
+ #define GET_RD_BY_IDX(vptr, idx)   (vptr->rd_ring[idx])
+ 
+ struct velocity_info {
+-	struct list_head list;
+-
+ 	struct pci_dev *pdev;
+ 	struct net_device *dev;
+ 
+@@ -1567,6 +1491,8 @@ struct velocity_info {
+ 	u32 ticks;
+ 
+ 	u8 rev_id;
++
++	struct napi_struct napi;
+ };
+ 
+ /**
+diff --git a/kernel/drivers/rtc/wmt-rtc.c b/kernel/drivers/rtc/wmt-rtc.c
+index 968004f..65ba233 100755
+--- a/kernel/drivers/rtc/wmt-rtc.c
++++ b/kernel/drivers/rtc/wmt-rtc.c
+@@ -278,7 +278,8 @@ wmt_rtc_interrupt(int irq, void *dev_id)
+ 	if (rtis & RTIS_UPDATE)
+ 		events |= (RTC_UF|RTC_IRQF);
+ 
+-	rtc_update_irq(wmt_rtc, 1, events);         /* in rtctime.c */
++	if (wmt_rtc)
++		rtc_update_irq(wmt_rtc, 1, events); /* in rtctime.c */
+ 
+ 	if ((rtis & RTIS_ALARM) && rtc_periodic_alarm(&rtc_alarm))
+ 		wmt_set_alarm(&rtc_alarm);   /* in rtctime.c */
