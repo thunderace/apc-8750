@@ -13,7 +13,7 @@
      export PATH=$PATH:$arm-toolchain/bin
      make CROSS_COMPILE=arm-linux-gnueabi- clean
      make Android_defconfig
-     make ubin CROSS_COMPILE=arm-none-linux-gnueabi-
+     make ubin CROSS_COMPILE=arm-linux-gnueabi-
 
 
 
